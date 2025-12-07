@@ -1,0 +1,826 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OS 核心调度演示 (交互式)</title>
+    <!-- 引入 Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 引入 Lucide 图标库 -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    
+    <style>
+        /* 自定义动画 */
+        @keyframes dashMove {
+            to {
+                stroke-dashoffset: -10;
+            }
+        }
+        .flow-line {
+            animation: dashMove 0.5s linear infinite;
+        }
+        
+        /* 隐藏滚动条但保留功能 */
+        .scrollbar-hide::-webkit-scrollbar {
+            display: none;
+        }
+        .scrollbar-hide {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+
+        /* 节点进入动画 */
+        @keyframes zoomIn {
+            from { transform: scale(0); opacity: 0; }
+            to { transform: scale(1); opacity: 1; }
+        }
+        .animate-zoom-in {
+            animation: zoomIn 0.3s ease-out forwards;
+        }
+
+        /* 发光滤镜效果模拟 */
+        .glow-effect {
+            filter: drop-shadow(0 0 5px rgba(255, 255, 255, 0.5));
+        }
+    </style>
+</head>
+<!-- 添加 id="main-body" 以便 JS 控制主题类名 -->
+<body id="main-body" class="w-full min-h-screen bg-slate-950 text-slate-200 font-sans selection:bg-blue-500/30 overflow-hidden flex flex-col transition-colors duration-500">
+
+    <!-- 顶部导航栏 -->
+    <header id="main-header" class="h-16 border-b border-slate-800 flex items-center justify-between px-6 bg-slate-900/50 backdrop-blur-sm z-50 flex-shrink-0 transition-colors duration-500">
+        <div class="flex items-center gap-3">
+            <div class="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center shadow-lg shadow-blue-500/20">
+                <i data-lucide="layers" class="text-white w-5 h-5"></i>
+            </div>
+            <div>
+                <h1 class="text-lg font-bold bg-gradient-to-r from-blue-400 to-purple-400 bg-clip-text text-transparent">
+                    OS 核心调度演示
+                </h1>
+                <p class="text-xs text-slate-500">交互式学习处理器三级调度与进程七态模型</p>
+            </div>
+        </div>
+        
+        <div class="flex items-center gap-6">
+            <div class="flex items-center gap-4 text-xs font-medium hidden sm:flex">
+                <div class="flex items-center gap-2">
+                    <span class="w-2 h-2 rounded-full bg-purple-500"></span>
+                    高级调度 (作业)
+                </div>
+                <div class="flex items-center gap-2">
+                    <span class="w-2 h-2 rounded-full bg-orange-500"></span>
+                    中级调度 (内存)
+                </div>
+                <div class="flex items-center gap-2">
+                    <span class="w-2 h-2 rounded-full bg-blue-500"></span>
+                    低级调度 (进程)
+                </div>
+            </div>
+
+            <!-- 主题切换按钮 -->
+            <button onclick="toggleTheme()" class="p-2 rounded-lg hover:bg-white/10 transition-colors" title="切换主题">
+                <i data-lucide="palette" class="w-5 h-5"></i>
+            </button>
+        </div>
+    </header>
+
+    <main class="flex-1 flex overflow-hidden">
+        <!-- 左侧：可视化画布区域 -->
+        <!-- 添加 id 以便 JS 更新背景网格颜色 -->
+        <div id="left-panel" class="flex-1 relative bg-[radial-gradient(#1e293b_1px,transparent_1px)] [background-size:20px_20px] transition-all duration-500">
+            
+            <!-- 左上角系统状态浮窗 -->
+            <div id="log-panel" class="absolute top-6 left-6 w-72 bg-slate-900/90 backdrop-blur border border-slate-700 rounded-xl p-4 shadow-xl z-20 transition-colors duration-500">
+                <div class="flex items-center gap-2 mb-3 text-amber-400">
+                    <i data-lucide="terminal" class="w-4 h-4"></i>
+                    <span class="text-sm font-bold">系统日志</span>
+                </div>
+                <div id="log-container" class="space-y-2 max-h-32 overflow-y-auto scrollbar-hide flex flex-col-reverse">
+                    <div class="text-xs p-2 rounded border-l-2 border-slate-500 bg-slate-800">系统就绪。请从高级调度开始提交作业。</div>
+                </div>
+            </div>
+
+            <!-- 可视化容器 (SVG连线 + DOM节点) -->
+            <div class="absolute inset-0 w-full h-full p-10">
+                <div class="relative w-full h-full" id="visualization-area">
+                    <!-- SVG 层：连线 -->
+                    <!-- viewBox 0 0 120 100 对应 STATES 中的坐标系统 -->
+                    <svg id="connections-svg" class="absolute inset-0 w-full h-full pointer-events-none z-0 overflow-visible" viewBox="0 0 120 100" preserveAspectRatio="none">
+                        <defs>
+                            <!-- 修正 refX="6" 以匹配 polygon 的尖端位置 (6)，确保箭头尖端正好在路径终点 -->
+                            <marker id="arrowhead" markerWidth="6" markerHeight="6" refX="6" refY="3" orient="auto">
+                                <polygon points="0 0, 6 3, 0 6" fill="#475569" />
+                            </marker>
+                            <marker id="arrowhead-active" markerWidth="6" markerHeight="6" refX="6" refY="3" orient="auto">
+                                <polygon points="0 0, 6 3, 0 6" fill="#cbd5e1" />
+                            </marker>
+                            <filter id="glow">
+                                <feGaussianBlur stdDeviation="2.5" result="coloredBlur"/>
+                                <feMerge>
+                                    <feMergeNode in="coloredBlur"/>
+                                    <feMergeNode in="SourceGraphic"/>
+                                </feMerge>
+                            </filter>
+                        </defs>
+                        <!-- 连线将通过 JS 生成 -->
+                    </svg>
+                    
+                    <!-- 节点层：DOM 元素将通过 JS 生成在这里 -->
+                    <div id="nodes-layer" class="absolute inset-0 w-full h-full pointer-events-none"></div>
+                </div>
+            </div>
+
+            <!-- 底部图例 -->
+            <div id="legend-panel" class="absolute bottom-6 left-6 flex flex-col gap-2 text-[10px] text-slate-500 pointer-events-none z-40 bg-slate-900/50 p-3 rounded-lg border border-slate-800/50 backdrop-blur-sm transition-colors duration-500">
+                <div class="flex items-center gap-2">
+                    <hr class="w-8 border-purple-500"/> <span>High-Level (决定作业进入内存)</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <hr class="w-8 border-blue-500"/> <span>Low-Level (决定CPU归属)</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <hr class="w-8 border-orange-500 border-dashed"/> <span>Mid-Level (Swapping/挂起)</span>
+                </div>
+
+                <!-- 新增：MEM 和 SWAP 的释义备注 -->
+                <div class="mt-2 pt-2 border-t border-slate-700/50 space-y-1.5">
+                    <div class="flex items-center gap-2">
+                        <span id="badge-mem" class="px-1.5 py-0.5 rounded bg-slate-700 text-slate-300 font-mono text-[9px] font-bold">MEM</span>
+                        <span>物理内存 (Memory) - 进程可被CPU执行</span>
+                    </div>
+                    <div class="flex items-center gap-2">
+                        <span id="badge-swap" class="px-1.5 py-0.5 rounded bg-stone-700 text-orange-200 font-mono text-[9px] font-bold">SWAP</span>
+                        <span>外存交换区 (Swap) - 进程暂停以释放内存</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- 右侧：控制面板 -->
+        <div id="right-panel" class="w-96 bg-slate-900 border-l border-slate-800 p-6 flex flex-col gap-8 shadow-2xl z-30 overflow-y-auto flex-shrink-0 transition-colors duration-500">
+            
+            <!-- 1. 高级调度 -->
+            <div class="relative group">
+                <div class="absolute -left-6 top-0 h-full w-1 bg-purple-600 rounded-r opacity-50 group-hover:opacity-100 transition-opacity"></div>
+                <h3 class="text-purple-400 font-bold mb-1 flex items-center gap-2">
+                    <i data-lucide="database" class="w-4 h-4"></i> 1. 高级调度 (作业调度)
+                </h3>
+                <p class="text-xs text-slate-500 mb-4 leading-relaxed">
+                    决定哪些作业从后备队列调入内存，创建进程并分配资源。
+                </p>
+                
+                <div id="control-section-high">
+                    <!-- 动态按钮内容 -->
+                </div>
+            </div>
+
+            <!-- 2. 低级调度 -->
+            <div class="relative group">
+                <div class="absolute -left-6 top-0 h-full w-1 bg-blue-600 rounded-r opacity-50 group-hover:opacity-100 transition-opacity"></div>
+                <h3 class="text-blue-400 font-bold mb-1 flex items-center gap-2">
+                    <i data-lucide="cpu" class="w-4 h-4"></i> 2. 低级调度 (进程调度)
+                </h3>
+                <p class="text-xs text-slate-500 mb-4 leading-relaxed">
+                    频率最高。决定哪个就绪进程获得 CPU 控制权。
+                </p>
+
+                <div class="space-y-3">
+                    <button id="btn-dispatch" onclick="handleAction('LOW', 'RUNNING', '调度')" class="w-full p-3 rounded-lg flex items-center justify-between transition-all" disabled>
+                        <span class="flex items-center gap-2 text-sm"><i data-lucide="play" class="w-4 h-4"></i> 调度进程 (Dispatch)</span>
+                    </button>
+
+                    <div class="grid grid-cols-2 gap-3">
+                        <button id="btn-timeout" onclick="handleAction('LOW', 'READY', '时间片用完')" class="p-3 rounded-lg flex flex-col items-center justify-center gap-1 transition-all border" disabled>
+                            <i data-lucide="clock" class="w-5 h-5 mb-1"></i>
+                            <span class="text-xs">时间片用完</span>
+                        </button>
+
+                        <button id="btn-wait" onclick="handleAction('LOW', 'BLOCKED', '请求 I/O')" class="p-3 rounded-lg flex flex-col items-center justify-center gap-1 transition-all border" disabled>
+                        <i data-lucide="log-out" class="w-5 h-5 mb-1"></i>
+                        <span class="text-xs">等待 I/O</span>
+                    </button>
+                </div>
+
+                <button id="btn-wakeup" class="w-full p-3 rounded-lg flex items-center justify-between transition-all" disabled>
+                    <span id="label-wakeup" class="flex items-center gap-2 text-sm"><i data-lucide="log-in" class="w-4 h-4"></i> I/O 完成 (Wake up)</span>
+                    <div id="indicator-wakeup" class="w-2 h-2 bg-emerald-400 rounded-full animate-ping hidden"></div>
+                </button>
+
+                <button id="btn-exit" onclick="handleAction('LOW', 'TERMINATED', '结束')" class="w-full p-3 rounded-lg flex items-center justify-center transition-all" disabled>
+                    <span class="flex items-center gap-2 text-sm font-bold"><i data-lucide="activity" class="w-4 h-4"></i> 进程结束 (Exit)</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- 3. 中级调度 -->
+        <div class="relative group">
+                <div class="absolute -left-6 top-0 h-full w-1 bg-orange-600 rounded-r opacity-50 group-hover:opacity-100 transition-opacity"></div>
+                <h3 class="text-orange-400 font-bold mb-1 flex items-center gap-2">
+                    <i data-lucide="hard-drive" class="w-4 h-4"></i> 3. 中级调度 (内存调度)
+                </h3>
+                <p class="text-xs text-slate-500 mb-4 leading-relaxed">
+                    控制内存中的多道程序度。内存不足时将进程挂起至外存(Swap)。
+                </p>
+
+                <div class="grid grid-cols-2 gap-3">
+                <button id="btn-swap-out" class="p-3 rounded-lg border border-dashed flex flex-col items-center gap-2 transition-all" disabled>
+                    <i data-lucide="arrow-right" class="w-5 h-5 rotate-90"></i>
+                    <span class="text-xs font-bold">挂起 (Swap Out)</span>
+                </button>
+
+                <button id="btn-swap-in" class="p-3 rounded-lg border border-dashed flex flex-col items-center gap-2 transition-all" disabled>
+                    <i data-lucide="arrow-right" class="w-5 h-5 -rotate-90"></i>
+                    <span class="text-xs font-bold">激活 (Swap In)</span>
+                </button>
+            </div>
+        </div>
+    </div>
+</main>
+
+<script>
+    // --- 主题配置系统 ---
+    const THEMES = [
+        {
+            name: 'Dark Slate',
+            body: 'bg-slate-950 text-slate-200',
+            header: 'bg-slate-900/50 border-slate-800',
+            leftPanel: 'bg-[radial-gradient(#1e293b_1px,transparent_1px)]',
+            rightPanel: 'bg-slate-900 border-slate-800',
+            logPanel: 'bg-slate-900/90 border-slate-700',
+            legendPanel: 'bg-slate-900/50 border-slate-800/50',
+            
+            // 颜色定义 (用于 JS 逻辑)
+            colors: {
+                baseLine: '#334155', // slate-700
+                textDefault: 'text-slate-400',
+                textActive: 'text-white',
+                borderDefault: 'border-slate-600',
+                nodeBgDefault: 'bg-slate-800/50',
+                nodeGlowDefault: 'shadow-[0_0_10px_rgba(255,255,255,0.2)]',
+                iconDefault: 'text-slate-600',
+                btnDisabled: 'bg-slate-800/50 text-slate-600 border-transparent',
+                btnGhost: 'bg-slate-800/30 border-slate-800 text-slate-700'
+            }
+        },
+        {
+            name: 'Light Academic',
+            body: 'bg-slate-50 text-slate-700',
+            header: 'bg-white/80 border-slate-200 shadow-sm',
+            leftPanel: 'bg-[radial-gradient(#cbd5e1_1px,transparent_1px)]',
+            rightPanel: 'bg-white border-slate-200',
+            logPanel: 'bg-white/90 border-slate-200 shadow-lg',
+            legendPanel: 'bg-white/80 border-slate-200',
+
+            colors: {
+                baseLine: '#94a3b8', // slate-400
+                textDefault: 'text-slate-500',
+                textActive: 'text-slate-900',
+                borderDefault: 'border-slate-300',
+                nodeBgDefault: 'bg-white',
+                nodeGlowDefault: 'shadow-md',
+                iconDefault: 'text-slate-400',
+                btnDisabled: 'bg-slate-100 text-slate-400 border-transparent',
+                btnGhost: 'bg-slate-50 border-slate-200 text-slate-400'
+            }
+        },
+        {
+            name: 'Retro Matrix',
+            body: 'bg-black text-green-500 font-mono',
+            header: 'bg-black border-green-900',
+            leftPanel: 'bg-[radial-gradient(#064e3b_1px,transparent_1px)]',
+            rightPanel: 'bg-black border-green-900',
+            logPanel: 'bg-black border-green-800 shadow-[0_0_10px_rgba(22,163,74,0.2)]',
+            legendPanel: 'bg-black border-green-900',
+
+            colors: {
+                baseLine: '#14532d', // green-900
+                textDefault: 'text-green-700',
+                textActive: 'text-green-400',
+                borderDefault: 'border-green-800',
+                nodeBgDefault: 'bg-black',
+                nodeGlowDefault: 'shadow-[0_0_10px_rgba(34,197,94,0.3)]',
+                iconDefault: 'text-green-800',
+                btnDisabled: 'bg-green-900/10 text-green-900 border border-green-900/30',
+                btnGhost: 'bg-black border-green-900 text-green-900'
+            }
+        }
+    ];
+
+    let currentThemeIndex = 0;
+
+    function toggleTheme() {
+        currentThemeIndex = (currentThemeIndex + 1) % THEMES.length;
+        applyTheme();
+        renderNodes(); // 重绘节点颜色
+        renderSVGPaths(); // 重绘连线颜色
+        updateButtons(); // 更新按钮样式
+        
+        // 更新日志颜色 (需要遍历)
+        // 简单起见，仅新日志会应用新样式，或者可以刷新容器
+    }
+
+    function getTheme() {
+        return THEMES[currentThemeIndex];
+    }
+
+    function applyTheme() {
+        const t = getTheme();
+        
+        // 更新静态容器类名
+        document.getElementById('main-body').className = `w-full min-h-screen font-sans selection:bg-blue-500/30 overflow-hidden flex flex-col transition-colors duration-500 ${t.body}`;
+        document.getElementById('main-header').className = `h-16 border-b flex items-center justify-between px-6 backdrop-blur-sm z-50 flex-shrink-0 transition-colors duration-500 ${t.header}`;
+        document.getElementById('left-panel').className = `flex-1 relative [background-size:20px_20px] transition-all duration-500 ${t.leftPanel}`;
+        document.getElementById('right-panel').className = `w-96 border-l p-6 flex flex-col gap-8 shadow-2xl z-30 overflow-y-auto flex-shrink-0 transition-colors duration-500 ${t.rightPanel}`;
+        document.getElementById('log-panel').className = `absolute top-6 left-6 w-72 backdrop-blur border rounded-xl p-4 shadow-xl z-20 transition-colors duration-500 ${t.logPanel}`;
+        document.getElementById('legend-panel').className = `absolute bottom-6 left-6 flex flex-col gap-2 text-[10px] pointer-events-none z-40 p-3 rounded-lg border backdrop-blur-sm transition-colors duration-500 ${t.legendPanel}`;
+    }
+
+    // --- 数据模型 ---
+    // x 坐标基于 0-120 的 SVG 系统，y 坐标基于 0-100
+    const STATES = {
+            NEW: { id: 'NEW', label: '创建态 (New)', x: 10, y: 30, type: 'memory', icon: 'activity' },
+            READY: { id: 'READY', label: '就绪态 (Ready)', x: 35, y: 30, type: 'memory', inMemory: true, icon: 'layers' },
+            RUNNING: { id: 'RUNNING', label: '运行态 (Running)', x: 60, y: 20, type: 'cpu', inMemory: true, icon: 'cpu' },
+            BLOCKED: { id: 'BLOCKED', label: '阻塞态 (Blocked)', x: 85, y: 30, type: 'memory', inMemory: true, icon: 'alert-circle' },
+            TERMINATED: { id: 'TERMINATED', label: '终止态 (Terminated)', x: 110, y: 30, type: 'memory', icon: 'check-circle-2' },
+            READY_SUSPEND: { id: 'READY_SUSPEND', label: '就绪挂起 (Ready-Suspended)', x: 35, y: 70, type: 'swap', inMemory: false, icon: 'hard-drive' },
+            BLOCKED_SUSPEND: { id: 'BLOCKED_SUSPEND', label: '阻塞挂起 (Blocked-Suspended)', x: 85, y: 70, type: 'swap', inMemory: false, icon: 'hard-drive' },
+        };
+
+        const TRANSITIONS = [
+            // 水平流 - 核心
+            { from: 'NEW', to: 'READY', type: 'high', label: '提交', curve: 0 },
+            { from: 'READY', to: 'RUNNING', type: 'low', label: '调度', curve: 0 },
+            { from: 'RUNNING', to: 'BLOCKED', type: 'low', label: '等待 I/O', curve: 0 },
+            
+            // 回环/长距离跳跃
+            { from: 'RUNNING', to: 'READY', type: 'low', label: '时间片用完', curve: 18 }, 
+            { from: 'BLOCKED', to: 'READY', type: 'low', label: 'I/O 完成', curve: -25 }, 
+            { from: 'RUNNING', to: 'TERMINATED', type: 'low', label: '退出', curve: 15 }, 
+
+            // 垂直流 - 内存交换
+            { from: 'READY', to: 'READY_SUSPEND', type: 'mid', label: '挂起', dashed: true, curve: -15 }, 
+            { from: 'READY_SUSPEND', to: 'READY', type: 'mid', label: '激活', dashed: true, curve: 10 }, 
+
+            { from: 'BLOCKED', to: 'BLOCKED_SUSPEND', type: 'mid', label: '挂起', dashed: true, curve: 15 }, 
+            { from: 'BLOCKED_SUSPEND', to: 'BLOCKED', type: 'mid', label: '激活', dashed: true, curve: -10 }, 
+            
+            // 底部水平流
+            { from: 'BLOCKED_SUSPEND', to: 'READY_SUSPEND', type: 'mid', label: '外存 I/O 完成', dashed: true, curve: -20 } 
+        ];
+
+        // --- 应用状态 ---
+        let currentProcess = null; // { state: 'NEW', id: 'P1' } or null
+        let activeTransitionKey = null;
+
+        // --- 初始化 ---
+        document.addEventListener('DOMContentLoaded', () => {
+            lucide.createIcons();
+            applyTheme(); // 应用初始主题
+            renderNodes();
+            setTimeout(() => {
+                renderSVGPaths();
+                updateUI();
+            }, 0);
+            
+            window.addEventListener('resize', renderSVGPaths);
+        });
+
+        // --- 核心逻辑 ---
+
+        function handleAction(actionType, targetState, transitionLabel) {
+            if (actionType === 'CREATE') {
+                triggerAnimation(null, 'NEW');
+                setTimeout(() => {
+                    currentProcess = { id: 'P1', state: 'NEW' };
+                    addLog('作业已创建，进入创建态。', 'high');
+                    updateUI();
+                }, 800);
+                return;
+            }
+
+            if (!currentProcess) return;
+
+            // 1. 触发动画
+            triggerAnimation(currentProcess.state, targetState);
+
+            // 2. 延迟更新状态
+            const DURATION = 1000;
+            setTimeout(() => {
+                currentProcess.state = targetState;
+                addLog(`进程 P1: ${transitionLabel} -> ${STATES[targetState].label}`, 
+                       actionType === 'HIGH' ? 'high' : actionType === 'MID' ? 'mid' : 'low');
+                
+                if (targetState === 'TERMINATED') {
+                    setTimeout(() => {
+                        currentProcess = null;
+                        addLog('进程 P1 执行完毕，资源已回收。', 'success');
+                        updateUI();
+                    }, 1500);
+                } else {
+                    updateUI();
+                }
+            }, DURATION * 0.8);
+        }
+
+        function triggerAnimation(fromState, toState) {
+            const key = fromState ? `${fromState}-${toState}` : `NULL-${toState}`;
+            const themeColors = getTheme().colors; // 获取当前主题颜色
+            
+            if (fromState) {
+                const group = document.getElementById(`transition-group-${key}`);
+                if (group) {
+                    const baseLine = group.querySelector('.base-line');
+                    const flowLine = group.querySelector('.flow-line');
+                    const particle = group.querySelector('.particle-circle');
+                    const label = group.querySelector('.transition-label');
+                    const particleAnim = group.querySelector('animateMotion');
+
+                    baseLine.classList.remove('transition-colors', 'duration-300');
+                    const transDef = TRANSITIONS.find(t => t.from === fromState && t.to === toState);
+                    const colorClass = transDef.type === 'high' ? '#c084fc' : transDef.type === 'mid' ? '#fb923c' : '#60a5fa';
+                    baseLine.setAttribute('stroke', colorClass);
+                    baseLine.setAttribute('stroke-width', '3');
+                    baseLine.style.filter = 'url(#glow)';
+
+                    flowLine.style.display = 'block';
+                    particle.style.display = 'block';
+                    label.style.display = 'block';
+                    
+                    particleAnim.beginElement();
+
+                    setTimeout(() => {
+                        baseLine.classList.add('transition-colors', 'duration-300');
+                        baseLine.setAttribute('stroke', themeColors.baseLine); // 使用主题色恢复
+                        baseLine.setAttribute('stroke-width', '1.5');
+                        baseLine.style.filter = 'none';
+
+                        flowLine.style.display = 'none';
+                        particle.style.display = 'none';
+                        label.style.display = 'none';
+                    }, 1000);
+                }
+            }
+        }
+
+        // --- 渲染与 UI 更新 ---
+
+        function updateUI() {
+            renderNodes(); 
+            updateButtons();
+        }
+
+        function updateButtons() {
+            const s = currentProcess?.state;
+            const exists = !!currentProcess;
+            const theme = getTheme().colors; // 获取当前主题配置
+
+            // 1. 高级调度区域
+            const highSection = document.getElementById('control-section-high');
+            if (!exists) {
+                highSection.innerHTML = `
+                    <button onclick="handleAction('CREATE', 'NEW', '创建作业')" class="w-full py-3 bg-purple-600 hover:bg-purple-500 text-white rounded-lg flex items-center justify-center gap-2 transition-all shadow-lg shadow-purple-900/20 active:scale-95">
+                        <i data-lucide="activity" class="w-4 h-4"></i> 新建作业 (Create)
+                    </button>
+                `;
+            } else if (s === 'NEW') {
+                highSection.innerHTML = `
+                    <button onclick="handleAction('HIGH', 'READY', '提交')" class="w-full py-3 bg-purple-600 hover:bg-purple-500 text-white rounded-lg flex items-center justify-center gap-2 transition-all shadow-lg shadow-purple-900/20 animate-pulse">
+                        <i data-lucide="arrow-right" class="w-4 h-4"></i> 提交新作业 (Submit to Ready)
+                    </button>
+                `;
+            } else {
+                highSection.innerHTML = `
+                    <div class="w-full py-3 ${theme.btnGhost} rounded-lg flex items-center justify-center gap-2 border border-dashed cursor-not-allowed">
+                        作业已存在
+                    </div>
+                `;
+            }
+            lucide.createIcons();
+
+            // 2. 低级调度按钮状态 (使用主题颜色变量)
+            setBtnState('btn-dispatch', s === 'READY', 'bg-slate-700 hover:bg-blue-600 text-white shadow-md', theme.btnDisabled);
+            
+            setBtnState('btn-timeout', s === 'RUNNING', 'bg-slate-800 border-slate-600 hover:border-blue-400 text-blue-200', theme.btnGhost);
+            setBtnState('btn-wait', s === 'RUNNING', 'bg-slate-800 border-slate-600 hover:border-amber-400 text-amber-200', theme.btnGhost);
+            setBtnState('btn-exit', s === 'RUNNING', 'bg-red-500/10 hover:bg-red-600 border border-red-500/30 text-red-400 hover:text-white', theme.btnDisabled);
+
+            // 智能 I/O 按钮逻辑
+            const btnWakeup = document.getElementById('btn-wakeup');
+            const labelWakeup = document.getElementById('label-wakeup');
+            const indicatorWakeup = document.getElementById('indicator-wakeup');
+            
+            const isBlocked = s === 'BLOCKED';
+            const isSuspendBlocked = s === 'BLOCKED_SUSPEND';
+            
+            if (isBlocked) {
+                setBtnState('btn-wakeup', true, 'bg-emerald-600/20 border border-emerald-500/50 text-emerald-300 hover:bg-emerald-600 hover:text-white', '');
+                btnWakeup.onclick = () => handleAction('LOW', 'READY', 'I/O 完成');
+                labelWakeup.innerHTML = '<i data-lucide="log-in" class="w-4 h-4"></i> I/O 完成 (Wake up)';
+                indicatorWakeup.style.display = 'block';
+                indicatorWakeup.className = "w-2 h-2 bg-emerald-400 rounded-full animate-ping";
+            } else if (isSuspendBlocked) {
+                setBtnState('btn-wakeup', true, 'bg-emerald-900/20 border border-emerald-500/30 text-emerald-400 hover:bg-emerald-800/50 hover:text-emerald-200', '');
+                btnWakeup.onclick = () => handleAction('MID', 'READY_SUSPEND', 'I/O 完成 (Swap)');
+                labelWakeup.innerHTML = '<i data-lucide="check-circle-2" class="w-4 h-4"></i> 外存 I/O 完成 (至就绪挂起)';
+                indicatorWakeup.style.display = 'block';
+                indicatorWakeup.className = "w-2 h-2 bg-emerald-600 rounded-full animate-pulse";
+            } else {
+                setBtnState('btn-wakeup', false, '', theme.btnDisabled);
+                btnWakeup.onclick = null;
+                labelWakeup.innerHTML = '<i data-lucide="log-in" class="w-4 h-4"></i> I/O 完成 (Wake up)';
+                indicatorWakeup.style.display = 'none';
+            }
+
+            // 3. 中级调度按钮
+            const canSwapOut = ['READY', 'BLOCKED'].includes(s);
+            const btnSwapOut = document.getElementById('btn-swap-out');
+            btnSwapOut.disabled = !canSwapOut;
+            const swapOutClass = canSwapOut ? 'border-orange-500 text-orange-400 hover:bg-orange-500/10 cursor-pointer' : `border-transparent ${theme.colors ? theme.colors.textDefault : 'text-slate-600'} cursor-not-allowed`;
+            // 使用更简单的逻辑重置类名，防止 tailwind 类冲突
+            btnSwapOut.className = `p-3 rounded-lg border border-dashed flex flex-col items-center gap-2 transition-all ${swapOutClass}`;
+            if (!canSwapOut) {
+                btnSwapOut.classList.add(...theme.btnDisabled.split(' ')); // Apply theme disabled styles
+                btnSwapOut.classList.remove('border-dashed'); // Remove dashed if disabled styles have border
+                btnSwapOut.classList.add('border-dashed'); // Add back
+            }
+
+            btnSwapOut.onclick = () => {
+                if(s === 'READY') handleAction('MID', 'READY_SUSPEND', '挂起');
+                if(s === 'BLOCKED') handleAction('MID', 'BLOCKED_SUSPEND', '挂起');
+            };
+
+            const canSwapIn = ['READY_SUSPEND', 'BLOCKED_SUSPEND'].includes(s);
+            const btnSwapIn = document.getElementById('btn-swap-in');
+            btnSwapIn.disabled = !canSwapIn;
+            const swapInClass = canSwapIn ? 'border-orange-500 text-orange-400 hover:bg-orange-500/10 cursor-pointer' : `border-transparent ${theme.colors ? theme.colors.textDefault : 'text-slate-600'} cursor-not-allowed`;
+             btnSwapIn.className = `p-3 rounded-lg border border-dashed flex flex-col items-center gap-2 transition-all ${swapInClass}`;
+             if (!canSwapIn) {
+                btnSwapIn.classList.add(...theme.btnDisabled.split(' '));
+             }
+
+            btnSwapIn.onclick = () => {
+                if(s === 'READY_SUSPEND') handleAction('MID', 'READY', '激活');
+                if(s === 'BLOCKED_SUSPEND') handleAction('MID', 'BLOCKED', '激活');
+            };
+        }
+
+        function setBtnState(id, isActive, activeClass, inactiveClass) {
+            const btn = document.getElementById(id);
+            btn.disabled = !isActive;
+            // 完全重置类名以避免冲突
+            const baseClass = "w-full p-3 rounded-lg flex items-center justify-center transition-all";
+            // 特殊处理 flex-col 的按钮
+            const isCol = id === 'btn-timeout' || id === 'btn-wait';
+            const layoutClass = isCol ? "flex flex-col gap-1 border" : "flex justify-between items-center";
+
+            if (isActive) {
+                btn.className = `${isCol ? 'p-3 rounded-lg' : 'w-full p-3 rounded-lg'} ${layoutClass} ${activeClass} cursor-pointer`;
+            } else {
+                btn.className = `${isCol ? 'p-3 rounded-lg' : 'w-full p-3 rounded-lg'} ${layoutClass} ${inactiveClass} cursor-not-allowed`;
+            }
+        }
+
+        function addLog(text, type = 'info') {
+            const container = document.getElementById('log-container');
+            const div = document.createElement('div');
+            // 日志颜色也应该随主题变化，这里为了简单保留了彩色边框，但调整了背景适配
+            let borderClass = 'border-slate-500 bg-slate-500/10';
+            if (type === 'high') borderClass = 'border-purple-500 bg-purple-500/10';
+            if (type === 'mid') borderClass = 'border-orange-500 bg-orange-500/10';
+            if (type === 'low') borderClass = 'border-blue-500 bg-blue-500/10';
+            if (type === 'success') borderClass = 'border-green-500 bg-green-500/10';
+            div.className = `text-xs p-2 rounded border-l-2 animate-zoom-in ${borderClass} mb-1`;
+            div.textContent = text;
+            container.prepend(div);
+            if (container.children.length > 5) container.lastElementChild.remove();
+        }
+
+        function renderNodes() {
+            const container = document.getElementById('nodes-layer');
+            container.innerHTML = ''; 
+            const theme = getTheme().colors; // 获取当前主题颜色配置
+
+            Object.entries(STATES).forEach(([key, config]) => {
+                const isActive = currentProcess?.state === key;
+                
+                let borderColor = theme.borderDefault;
+                let bgColor = theme.nodeBgDefault;
+                let textColor = theme.textDefault;
+                let glow = '';
+                let iconColor = theme.iconDefault;
+
+                if (isActive) {
+                    textColor = `${theme.textActive} font-bold`;
+                    if (config.type === 'memory' || config.type === 'cpu') {
+                        if (key === 'RUNNING') {
+                            borderColor = 'border-blue-400';
+                            bgColor = 'bg-blue-900/30';
+                            glow = 'shadow-[0_0_20px_rgba(59,130,246,0.5)]';
+                            iconColor = 'text-blue-400 animate-pulse';
+                        } else if (key === 'BLOCKED') {
+                            borderColor = 'border-red-400';
+                            bgColor = 'bg-red-900/30';
+                            glow = 'shadow-[0_0_15px_rgba(248,113,113,0.3)]';
+                            iconColor = 'text-red-400';
+                        } else if (key === 'READY') {
+                            borderColor = 'border-emerald-400';
+                            bgColor = 'bg-emerald-900/30';
+                            glow = 'shadow-[0_0_15px_rgba(52,211,153,0.3)]';
+                            iconColor = 'text-emerald-400';
+                        } else if (key === 'NEW') {
+                            borderColor = 'border-purple-400';
+                            iconColor = 'text-purple-400';
+                            glow = 'shadow-[0_0_10px_rgba(168,85,247,0.3)]';
+                        }
+                    } else if (config.type === 'swap') {
+                        borderColor = 'border-orange-400';
+                        bgColor = 'bg-orange-900/20';
+                        glow = 'shadow-[0_0_15px_rgba(251,146,60,0.3)]';
+                        iconColor = 'text-orange-400';
+                    }
+                } else {
+                    // 非激活状态下的默认 Glow
+                     glow = theme.nodeGlowDefault || '';
+                }
+
+                const nodeEl = document.createElement('div');
+                nodeEl.className = `absolute w-32 h-24 flex flex-col items-center justify-center rounded-xl border-2 transition-all duration-500 pointer-events-auto ${borderColor} ${bgColor} ${glow}`;
+                
+                const leftPercent = (config.x / 120) * 100;
+                nodeEl.style.left = `${leftPercent}%`;
+                nodeEl.style.top = `${config.y}%`;
+                nodeEl.style.transform = 'translate(-50%, -50%)';
+
+                const badgeColor = config.inMemory ? 'bg-slate-700 text-slate-300' : 'bg-stone-700 text-orange-200';
+                const labelMain = config.label.split('(')[0];
+                const labelSub = config.label.split('(')[1].replace(')', '');
+
+                let p1Token = isActive ? `<div class="absolute -right-2 -top-2 w-6 h-6 bg-white rounded-full flex items-center justify-center text-slate-900 text-xs font-bold shadow-lg animate-zoom-in z-50">P1</div>` : '';
+
+                nodeEl.innerHTML = `
+                    <div class="absolute -top-3 px-2 py-0.5 text-[10px] rounded-full ${badgeColor}">
+                        ${config.inMemory ? 'MEM' : 'SWAP'}
+                    </div>
+                    <div class="mb-2">
+                        <i data-lucide="${config.icon}" class="w-6 h-6 ${iconColor}"></i>
+                    </div>
+                    <span class="text-xs text-center leading-tight ${textColor}">
+                        ${labelMain}<br/>
+                        <span class="opacity-75 text-[10px]">(${labelSub})</span>
+                    </span>
+                    ${p1Token}
+                `;
+
+                container.appendChild(nodeEl);
+            });
+            lucide.createIcons();
+        }
+
+        // 计算 SVG 坐标系下连线与 DOM 节点的交点
+        function calculateIntersection(x1, y1, x2, y2, svgWidth, svgHeight) {
+            const boxPixelW = 128;
+            const boxPixelH = 96;
+            
+            const boxW = boxPixelW * (120 / svgWidth);
+            const boxH = boxPixelH * (100 / svgHeight);
+
+            const dx = x1 - x2;
+            const dy = y1 - y2;
+
+            if (dx === 0 && dy === 0) return { x: x2, y: y2 };
+            
+            const halfW = boxW / 2;
+            const halfH = boxH / 2;
+            
+            const slope = dx !== 0 ? Math.abs(dy / dx) : Infinity;
+            const diagSlope = boxH / boxW;
+
+            let intersectX, intersectY;
+
+            if (slope < diagSlope) {
+                const vecX = x1 - x2;
+                const vecY = y1 - y2;
+                const absX = Math.abs(vecX);
+                const tX = absX > 0 ? halfW / absX : Infinity;
+                intersectX = x2 + tX * vecX;
+                intersectY = y2 + tX * vecY;
+            } else {
+               const vecX = x1 - x2;
+               const vecY = y1 - y2;
+               const absY = Math.abs(vecY);
+               const tY = absY > 0 ? halfH / absY : Infinity;
+               intersectX = x2 + tY * vecX;
+               intersectY = y2 + tY * vecY;
+            }
+
+            return { x: intersectX, y: intersectY };
+        }
+
+        function renderSVGPaths() {
+            const svg = document.getElementById('connections-svg');
+            const svgRect = svg.getBoundingClientRect(); 
+            const theme = getTheme().colors; // 获取当前主题颜色
+
+            const defs = svg.querySelector('defs');
+            svg.innerHTML = '';
+            svg.appendChild(defs);
+            
+            TRANSITIONS.forEach(t => {
+                const start = STATES[t.from];
+                const end = STATES[t.to];
+                const x1 = start.x;
+                const y1 = start.y;
+                const x2 = end.x;
+                const y2 = end.y;
+
+                const isVertical = Math.abs(y2 - y1) > Math.abs(x2 - x1);
+                const curveOffset = t.curve || 0;
+                let controlX, controlY;
+                const midX = (x1 + x2) / 2;
+                const midY = (y1 + y2) / 2;
+
+                if (isVertical) {
+                    controlX = midX + curveOffset; 
+                    controlY = midY;
+                } else {
+                    controlX = midX;
+                    controlY = midY - curveOffset; 
+                }
+
+                // 计算交点
+                const intersect = calculateIntersection(controlX, controlY, x2, y2, svgRect.width, svgRect.height);
+                
+                const pathData = `M ${x1} ${y1} Q ${controlX} ${controlY} ${intersect.x} ${intersect.y}`;
+
+                // SVG 创建逻辑...
+                const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+                g.id = `transition-group-${t.from}-${t.to}`;
+
+                const baseLine = document.createElementNS("http://www.w3.org/2000/svg", "path");
+                baseLine.setAttribute("d", pathData);
+                baseLine.setAttribute("fill", "none");
+                baseLine.setAttribute("stroke", theme.baseLine); // 使用主题色
+                baseLine.setAttribute("stroke-width", "1.5");
+                baseLine.setAttribute("stroke-dasharray", t.dashed ? "5,5" : "0");
+                baseLine.setAttribute("marker-end", "url(#arrowhead)");
+                baseLine.classList.add("base-line", "transition-colors", "duration-300");
+                baseLine.setAttribute("vector-effect", "non-scaling-stroke");
+
+                const flowLine = document.createElementNS("http://www.w3.org/2000/svg", "path");
+                flowLine.setAttribute("d", pathData);
+                flowLine.setAttribute("fill", "none");
+                const color = t.type === 'high' ? '#c084fc' : t.type === 'mid' ? '#fb923c' : '#60a5fa';
+                flowLine.setAttribute("stroke", color);
+                flowLine.setAttribute("stroke-width", "3.5");
+                flowLine.setAttribute("stroke-dasharray", "5, 5");
+                flowLine.classList.add("flow-line", "opacity-80");
+                flowLine.style.display = "none"; 
+                flowLine.setAttribute("vector-effect", "non-scaling-stroke");
+
+                const particleCircle = document.createElementNS("http://www.w3.org/2000/svg", "circle");
+                particleCircle.setAttribute("r", "3");
+                particleCircle.setAttribute("fill", "#ffffff");
+                particleCircle.setAttribute("filter", "url(#glow)");
+                particleCircle.classList.add("particle-circle");
+                particleCircle.style.display = "none"; 
+
+                const animateMotion = document.createElementNS("http://www.w3.org/2000/svg", "animateMotion");
+                animateMotion.setAttribute("dur", "0.8s");
+                animateMotion.setAttribute("repeatCount", "1");
+                animateMotion.setAttribute("path", pathData);
+                animateMotion.setAttribute("rotate", "auto");
+                animateMotion.setAttribute("fill", "freeze");
+                animateMotion.setAttribute("calcMode", "spline");
+                animateMotion.setAttribute("keyPoints", "0;1");
+                animateMotion.setAttribute("keyTimes", "0;1");
+                animateMotion.setAttribute("keySplines", "0.4 0 0.2 1");
+                
+                particleCircle.appendChild(animateMotion);
+
+                const labelX = 0.25 * x1 + 0.5 * controlX + 0.25 * intersect.x; 
+                const labelY = 0.25 * y1 + 0.5 * controlY + 0.25 * intersect.y;
+
+                const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+                text.setAttribute("x", labelX);
+                text.setAttribute("y", labelY - 2); 
+                text.setAttribute("fill", color);
+                text.setAttribute("font-size", "3");
+                text.setAttribute("text-anchor", "middle");
+                text.setAttribute("font-weight", "bold");
+                text.classList.add("transition-label");
+                text.style.display = "none";
+                text.style.textShadow = "0px 0px 5px #0f172a"; 
+                text.textContent = t.label;
+
+                g.appendChild(baseLine);
+                g.appendChild(flowLine);
+                g.appendChild(particleCircle);
+                g.appendChild(text);
+
+                svg.appendChild(g);
+            });
+        }
+    </script>
+</body>
+</html>
