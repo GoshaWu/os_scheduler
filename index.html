@@ -1,3 +1,18 @@
+<!--
+  OS Core Scheduling Demo
+  Copyright (c) 2025 Gosha (junhwu@stu.edu.cn)
+  
+  Licensed under the MIT License.
+  Permission is hereby granted, free of charge, to any person obtaining a copy
+  of this software and associated documentation files (the "Software"), to deal
+  in the Software without restriction, including without limitation the rights
+  to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+  copies of the Software, and to permit persons to whom the Software is
+  furnished to do so, subject to the following conditions:
+  
+  The above copyright notice and this permission notice shall be included in all
+  copies or substantial portions of the Software.
+-->
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
@@ -142,7 +157,7 @@
                     <hr class="w-8 border-orange-500 border-dashed"/> <span>Mid-Level (Swapping/挂起)</span>
                 </div>
 
-                <!-- 新增：MEM 和 SWAP 的释义备注 -->
+                <!-- MEM 和 SWAP 的释义备注 -->
                 <div class="mt-2 pt-2 border-t border-slate-700/50 space-y-1.5">
                     <div class="flex items-center gap-2">
                         <span id="badge-mem" class="px-1.5 py-0.5 rounded bg-slate-700 text-slate-300 font-mono text-[9px] font-bold">MEM</span>
@@ -234,6 +249,14 @@
                 </button>
             </div>
         </div>
+
+        <!-- 版权页脚 -->
+        <div class="mt-auto pt-8 border-t border-slate-800/50 text-center transition-colors duration-500" id="copyright-footer">
+            <p class="text-[10px] font-mono transition-colors duration-500 text-slate-600">
+                &copy; 2025 OS Scheduling Model<br/>
+                Designed by <a href="mailto:junhwu@stu.edu.cn" class="hover:underline hover:text-blue-400 transition-colors">Gosha</a>
+            </p>
+        </div>
     </div>
 </main>
 
@@ -248,6 +271,8 @@
             rightPanel: 'bg-slate-900 border-slate-800',
             logPanel: 'bg-slate-900/90 border-slate-700',
             legendPanel: 'bg-slate-900/50 border-slate-800/50',
+            footerText: 'text-slate-600', // 深色主题下的版权文字颜色
+            footerBorder: 'border-slate-800/50',
             
             // 颜色定义 (用于 JS 逻辑)
             colors: {
@@ -270,6 +295,8 @@
             rightPanel: 'bg-white border-slate-200',
             logPanel: 'bg-white/90 border-slate-200 shadow-lg',
             legendPanel: 'bg-white/80 border-slate-200',
+            footerText: 'text-slate-400', // 浅色主题下的版权文字颜色
+            footerBorder: 'border-slate-200',
 
             colors: {
                 baseLine: '#94a3b8', // slate-400
@@ -291,6 +318,8 @@
             rightPanel: 'bg-black border-green-900',
             logPanel: 'bg-black border-green-800 shadow-[0_0_10px_rgba(22,163,74,0.2)]',
             legendPanel: 'bg-black border-green-900',
+            footerText: 'text-green-900', // 复古主题下的版权文字颜色
+            footerBorder: 'border-green-900',
 
             colors: {
                 baseLine: '#14532d', // green-900
@@ -316,7 +345,7 @@
         updateButtons(); // 更新按钮样式
         
         // 更新日志颜色 (需要遍历)
-        // 简单起见，仅新日志会应用新样式，或者可以刷新容器
+        // 简单起见，仅新日志会应用新样式
     }
 
     function getTheme() {
@@ -333,6 +362,11 @@
         document.getElementById('right-panel').className = `w-96 border-l p-6 flex flex-col gap-8 shadow-2xl z-30 overflow-y-auto flex-shrink-0 transition-colors duration-500 ${t.rightPanel}`;
         document.getElementById('log-panel').className = `absolute top-6 left-6 w-72 backdrop-blur border rounded-xl p-4 shadow-xl z-20 transition-colors duration-500 ${t.logPanel}`;
         document.getElementById('legend-panel').className = `absolute bottom-6 left-6 flex flex-col gap-2 text-[10px] pointer-events-none z-40 p-3 rounded-lg border backdrop-blur-sm transition-colors duration-500 ${t.legendPanel}`;
+        
+        // 更新版权页脚颜色
+        const footer = document.getElementById('copyright-footer');
+        footer.className = `mt-auto pt-8 border-t text-center transition-colors duration-500 ${t.footerBorder}`;
+        footer.querySelector('p').className = `text-[10px] font-mono transition-colors duration-500 ${t.footerText}`;
     }
 
     // --- 数据模型 ---
